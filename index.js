@@ -68,6 +68,24 @@ function showDirectory(req, res, dir, linkPrefix) {
   res.end();
 }
 
+function showPaths(req, res) {
+  var html = '<html><body>';
+  for (var i in app._router.stack) {
+    var layer = app._router.stack[i];
+    if (layer.route && layer.route.path) {
+      var path = layer.route.path;
+      html += '<a href="' + path + '">' + path + '</a><br/>';
+    }
+  }
+  html += '</body></html>';
+
+  res.writeHeader(200, {'Content-Type': 'text/html'});
+  res.write(html);
+  res.end();
+}
+
+app.get('/', showPaths);
+
 app.get('/v/samurai', function(req, res) {
   var loc = '/path/to/samurai/jack';
   var linkPrefix = '/v/samurai/'
