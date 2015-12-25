@@ -1,0 +1,255 @@
+<!doctype html>
+<html>
+  <body>
+   <div class="container">
+     <video src="http://45.55.245.118/v/example" controls>
+     </video>
+     <h1 id="caption"></h1>
+   </div>
+
+   <div id="controller">Control the video</div>
+   <div id="partnerCurrentTime">0</div>
+   <div id="latency">0</div>
+   <div id="skipToPartnerTime">Skip to partner time</div>
+   <style>
+    div.active {
+      color: red;
+      background: green;
+    }
+    body {
+      margin: 0;
+    }
+    video {
+      object-fit: cover;
+    }
+    #controller:hover {
+      cursor: pointer;
+      cursor: hand;
+    }
+    #skipToPartnerTime:hover {
+      cursor: pointer;
+      cursor: hand;
+    }
+    #caption {
+      position: absolute;
+      color: #FFF;
+      text-align: center;
+      margin: 0;
+      top: 80%;
+      z-index: 90000000001;
+    }
+   </style>
+   <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.3/jquery.min.js"></script>
+
+   <script src="/socket.io/socket.io.js"></script>
+   <script>
+     var partner = {currentTime: 0};
+
+     var $controller = $('#controller');
+     var $partnerCurrentTime = $('#partnerCurrentTime');
+     var $skipToPartnerTime = $('#skipToPartnerTime');
+     var $latency = $('#latency');
+     var $window = $(window);
+     var $caption = $('#caption');
+
+     var controlling = false;
+     var socket = io.connect('http://45.55.245.118');
+     var video = document.getElementsByTagName('video')[0];
+     var $video = $(video);
+     var latency = 50/1000; // 50ms
+     var totalLatency = latency * 4;
+
+     video.requestFullscreen = video.requestFullscreen || video.msRequestFullscreen || video.mozRequestFullScreen || video.webkitRequestFullscreen;
+
+     document.exitFullscreen = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+
+     if (typeof(document.isFullscreen === undefined)) {
+       document.isFullscreen = function() {
+         return document.webkitIsFullscreen || //Webkit browsers
+                document.mozFullScreen || // Firefox
+                function() { // IE
+                  if (document.msFullscreenElement !== undefined)
+                    return true;
+                  return false;
+                }();
+       };
+     }
+
+     function resizeVideo() {
+       $video.css({
+         'height': $window.height() + 'px',
+         'width': $window.width() + 'px'
+       });
+     }
+
+     function displayCaption(caption) {
+       $caption.text(caption);
+       setTimeout(function() {
+         $caption.text('');
+       }, 3000);
+     }
+
+     function humanizeSeconds(seconds) {
+       var date = new Date(null);
+       date.setSeconds(seconds);
+       // hh:mm:ss
+       return date.toISOString().substr(11, 8);
+     }
+
+     window.onresize = resizeVideo;
+
+     var keys = {
+       space: 32,
+       arrow: {
+         right: 39,
+         left: 37,
+         up: 38,
+         down: 40
+       },
+       p: 80,
+       f: 70
+     };
+
+     var waitKeyboard = false;
+     setInterval(function() {
+       waitKeyboard = false;
+     }, 300);
+
+     function togglePlaying(){
+       if (video.paused)
+         video.play();
+       else
+         video.pause();
+     }
+
+     function toggleFullScreen() {
+       if (document.webkitFullscreenElement) {
+         document.exitFullscreen();
+       } else {
+         video.requestFullscreen();
+       }
+     }
+
+     $video.click(togglePlaying);
+     $video.dblclick(toggleFullScreen);
+
+     window.addEventListener('keydown', function(e) {
+       var key = e.charCode ? e.charCode : e.keyCode ? e.keyCode : 0;
+
+       switch (key) {
+         case keys.arrow.right:
+           if (!waitKeyboard) {
+             waitKeyboard = true;
+             video.currentTime += 3;
+           }
+           e.preventDefault();
+           break;
+         case keys.arrow.left:
+           if (!waitKeyboard) {
+             waitKeyboard = true;
+             video.currentTime -= 3;
+           }
+           e.preventDefault();
+           break;
+         case keys.arrow.up:
+           if (video.volume + 0.1 >= 1)
+             video.volume = 1;
+           else
+             video.volume += 0.1;
+                        e.preventDefault();
+           break;
+         case keys.arrow.down:
+           if (video.volume - 0.1 <= 0)
+             video.volume = 0;
+           else
+             video.volume -= 0.1;
+           e.preventDefault();
+           break;
+         case keys.space:
+         case keys.p:
+           togglePlaying();
+           e.preventDefault();
+           break;
+         case keys.f:
+           toggleFullScreen();
+           e.stopPropagation();
+           break;
+       }
+     });
+
+     video.addEventListener('mousemove', function(e) {
+       displayCaption(humanizeSeconds(video.duration - video.currentTime) + ' remaining');
+     });
+
+     $(function() {
+       resizeVideo();
+
+       $controller.click(function() {
+         controlling = !controlling;
+         if (controlling) {
+           socket.emit('taken_control');
+           $controller.addClass('active');
+         } else {
+           $controller.removeClass('active');
+         }
+       });
+
+       $skipToPartnerTime.click(function() {
+         video.currentTime = partner.currentTime + totalLatency;
+       });
+     });
+
+     video.onplay = function() {
+       if (controlling)
+         socket.emit('play', {currentTime: video.currentTime});
+     };
+     video.onpause = function() {
+       if (controlling)
+         socket.emit('pause', {currentTime: video.currentTime});
+     };
+
+     // Measure latency
+     var startTime;
+     setInterval(function() {
+       startTime = Date.now();
+       socket.emit('ping');
+     }, 1000);
+     socket.on('pong', function() {
+       latency = (Date.now() - startTime)/1000; // ms to s
+       $latency.text(latency);
+     });
+
+     socket.on('play', function(data) {
+       video.currentTime = data.currentTime + totalLatency;
+       video.play();
+     });
+     socket.on('pause', function(data) {
+       video.currentTime = data.currentTime + totalLatency;
+       video.pause();
+     });
+
+     socket.on('someone_else_controlling', function() {
+       controlling = false;
+       $controller.removeClass('active');
+     });
+     socket.on('time_update', function(data) {
+       partner.currentTime = data.currentTime;
+       $partnerCurrentTime.text(humanizeSeconds(partner.currentTime));
+     });
+
+     function updateCaption(caption) {
+       socket.emit('caption_update', {caption: caption});
+       displayCaption(caption);
+     }
+     socket.on('caption_update', function(data) {
+       displayCaption(data.caption);
+     });
+
+     window.setInterval(function() {
+       var data = {currentTime: video.currentTime};
+       socket.emit('time_update', data);
+     }, 500);
+
+   </script>
+  </body>
+</html>

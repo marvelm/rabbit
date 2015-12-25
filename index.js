@@ -5,24 +5,47 @@ var http = require('http'),
 
 var app = express();
 
+var server = http.Server(app);
+var io = require('socket.io')(server);
+
+io.on('connection', function(socket) {
+  socket.on('play', function(data) {
+    socket.broadcast.emit('play', data);
+  });
+  socket.on('pause', function(data) {
+    socket.broadcast.emit('pause', data);
+  });
+  socket.on('taken_control', function(data) {
+    socket.broadcast.emit('someone_else_controlling');
+  });
+  socket.on('time_update', function(data) {
+    socket.broadcast.emit('time_update', data);
+  });
+  socket.on('caption_update', function(data) {
+    socket.broadcast.emit('caption_update', data);
+  });
+  socket.on('ping', function() {
+    socket.emit('pong');
+  });
+});
+
 function fileExists(filePath) {
   try {
     return fs.statSync(filePath).isFile();
   } catch (err) {
-      return false;
+    return false;
   }
 }
 
 function serveVideo(req, res, filepath, videoType) {
-  console.log(req.ip);
+  console.log(filepath);
   if (!fileExists(filepath)) {
     res.write('not found');
     res.end();
     return;
   }
 
-  var path = filepath;
-  var stat = fs.statSync(path);
+  var stat = fs.statSync(filepath);
   var total = stat.size;
 
   if (req.headers['range']) {
@@ -34,11 +57,10 @@ function serveVideo(req, res, filepath, videoType) {
     var start = parseInt(partialstart, 10);
     var end = partialend ? parseInt(partialend, 10) : total-1;
     var chunksize = (end-start)+1;
-    console.log('RANGE: ' + start + ' - ' + end + ' = ' + chunksize);
 
-    var file = fs.createReadStream(path, {start: start, end: end, autoClose: true});
+    var file = fs.createReadStream(filepath, {start: start, end: end, autoClose: true});
     res.writeHead(206, {
-       'Content-Range': 'bytes ' + start + '-' + end + '/' + total,
+        'Content-Range': 'bytes ' + start + '-' + end + '/' + total,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
         'Content-Type': videoType,
@@ -47,9 +69,8 @@ function serveVideo(req, res, filepath, videoType) {
     });
     file.pipe(res);
   } else {
-    console.log('ALL: ' + total);
     res.writeHead(200, { 'Content-Length': total, 'Content-Type': 'video/mp4' });
-    fs.createReadStream(path).pipe(res);
+    fs.createReadStream(filepath).pipe(res);
   }
 }
 
@@ -68,39 +89,56 @@ function showDirectory(req, res, dir, linkPrefix) {
   res.end();
 }
 
-function showPaths(req, res) {
+// Serve entire directory
+app.get('/v/samurai', function(req, res) {
+  var loc = '/path/to/samurai/jack';
+  showDirectory(req, res, loc, '/v/samurai/');
+});
+
+app.get('/v/samurai/:season', function(req, res) {
+  var loc = '/path/to/samurai/jack/' + req.params.season;
+  var linkPrefix = '/v/samurai/' + req.params.season + '/';
+  showDirectory(req, res, loc, linkPrefix);
+});
+
+// Serve individual video
+app.get('/v/samurai/:season/:filename', function(req, res) {
+  var loc = '/path/to/samurai/jack/' + req.params.season + '/' + req.params.filename;
+  serveVideo(req, res, filepath, 'video/webm');
+});
+
+var movies = {};
+
+JSON.parse(fs.readFileSync('movies.json', 'utf8')).forEach(function(movie) {
+  movies[movie.path] = movie;
+});
+
+console.log(movies);
+
+app.get('/v/:id', function(req, res) {
+  var movie = movies[req.params.id];
+  var filepath = movie.filepath;
+  var type = 'video/mp4';
+  if(movie.type) {
+    type = movie.type;
+  }
+  console.log(filepath);
+  serveVideo(req, res, filepath, type);
+});
+
+app.get('/v', function(req, res) {
   var html = '<html><body>';
-  for (var i in app._router.stack) {
-    var layer = app._router.stack[i];
-    if (layer.route && layer.route.path) {
-      var path = layer.route.path;
-      html += '<a href="' + path + '">' + path + '</a><br/>';
-    }
+  for (var path in movies) {
+    var url = '/v/' + path;
+    html += '<a href="' + url + '">' + path + '</a><br/>';
   }
   html += '</body></html>';
 
   res.writeHeader(200, {'Content-Type': 'text/html'});
   res.write(html);
   res.end();
-}
-
-app.get('/', showPaths);
-
-app.get('/v/samurai', function(req, res) {
-  var loc = '/path/to/samurai/jack';
-  var linkPrefix = '/v/samurai/'
-  showDirectory(req, res, loc, linkPrefix);
 });
 
-app.get('/v/samurai/:season', function(req, res) {
-  var loc = '/path/to/samurai/jack' + req.params.season;
-  var linkPrefix = '/v/samurai/' + req.params.season + '/';
-  showDirectory(req, res, loc, linkPrefix);
+app.get('/video', function(req, res) {
+  res.sendfile('index.html');
 });
-
-app.get('/v/samurai/:season/:filename', function(req, res) {
-  var filepath = '/path/to/samurai/jack'+ req.params.season + '/' + req.params.filename;
-  serveVideo(req, res, filepath, 'video/webm');
-});
-
-app.listen(8081);
