@@ -53,7 +53,7 @@
      var $caption = $('#caption');
 
      var controlling = false;
-     var socket = io.connect('http://45.55.245.118');
+     var socket = io.connect();
      var video = document.getElementsByTagName('video')[0];
      var $video = $(video);
      var latency = 50/1000; // 50ms
